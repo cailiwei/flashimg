@@ -1,7 +1,20 @@
 /*
+ * flashimg
+ * Copyright (C) 2011  Yargil <yargil@free.fr>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #include <stdio.h>
@@ -12,6 +25,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+
+#define FLASH_TYPE_NAND	0
+#define FLASH_TYPE_NOR	1
 
 
 struct image {
@@ -25,7 +41,11 @@ struct action {
 	char action;
 };
 
-static void oob(const char *buf, size_t len, unsigned char *check)
+
+void __nand_calculate_ecc(const unsigned char *buf, unsigned int eccsize,
+		       unsigned char *code);
+
+static void oob(const unsigned char *buf, size_t len, unsigned char *check)
 {
 	unsigned char code[32];
 
@@ -51,6 +71,7 @@ struct partion {
 
 static struct partion part_tab[32];
 static int nb_part;
+static int flash_type;
 
 static void partition_file(const char *filename)
 {
@@ -72,12 +93,12 @@ static void partition_file(const char *filename)
 
 	printf("name\toffset\t\tsize\n");
 	do {
-		int ret = fscanf(fp, "%s %i %i", name, &len, &off);
+		int ret = fscanf(fp, "%s %li %li", name, &len, &off);
 		if (ret != 3) break;
 		part_tab[idx].name = strdup(name);
 		part_tab[idx].off = off;
 		part_tab[idx].len = len;
-		printf("%s\t0x%08x\t0x%08x\n", name, off, len);
+		printf("%s\t0x%08lx\t0x%08lx\n", name, off, len);
 		idx++;
 	} while(!feof(fp));
 	nb_part = idx;
@@ -99,11 +120,14 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 	}
 	if (i==nb_part) return;
 
-	printf("Partion %s found (0x%xbytes @0x%x)\n", part_name, part_tab[i].len, part_tab[i].off);
+	printf("Partion %s found (0x%lx bytes @0x%lx)\n", part_name, part_tab[i].len, part_tab[i].off);
 	n = i;
 
-	off = part_tab[i].off + part_tab[i].off / 512 * 16;
-	printf("off real=%x\n", off);
+	if (flash_type == FLASH_TYPE_NAND)
+		off = part_tab[i].off + (part_tab[i].off / 512) * 16;
+	else
+		off = part_tab[i].off;
+	printf("off real=%lx\n", off);
 	img += off;
 
 	printf("Read partion:\n");
@@ -118,16 +142,19 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 	while (nb--) {
 		memcpy(buf, img, 512);
 		ret = fwrite(buf, 1, 512, fp);
-		img += 512+16;
+		img += 512;
+		if (flash_type == FLASH_TYPE_NAND)
+			img += 16;
 	}
-	printf("Read %d blocks at %d\n", _nb-nb, part_tab[i].off);
+	printf("Read %d blocks at %ld\n", _nb-nb, part_tab[i].off);
 
 	fclose(fp);
 }
 
 static void partition_write(char *img, const char *part_name, const char *filename)
 {
-	char buf[512+16];
+	unsigned char buf[512];
+	unsigned char oob_buf[16];
 	int i, nb, ret,n, _nb;
 	FILE *fp;
 	unsigned long off;
@@ -140,15 +167,19 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	}
 	if (i==nb_part) return;
 
-	printf("Partion %s found (0x%xbytes @0x%x)\n", part_name, part_tab[i].len, part_tab[i].off);
+	printf("Partion %s found (0x%lx bytes @0x%lx)\n", part_name, part_tab[i].len, part_tab[i].off);
 	n = i;
 
-	off = part_tab[i].off + (part_tab[i].off / 512) * 16;
-	printf("off real=%x\n", off);
+	if (flash_type == FLASH_TYPE_NAND)
+		off = part_tab[i].off + (part_tab[i].off / 512) * 16;
+	else
+		off = part_tab[i].off;
+	printf("off real=%lx\n", off);
 
 	printf("Erase partion\n");
 	img += off;
-	memset(img, 0xff, part_tab[i].len);
+	if (flash_type == FLASH_TYPE_NAND)
+		memset(img, 0xff, part_tab[i].len);
 
 	printf("Write partion:\n");
 	fp = fopen(filename, "rb");
@@ -164,10 +195,15 @@ static void partition_write(char *img, const char *part_name, const char *filena
 		ret = fread(buf, 1, 512, fp);
 		if (ret <= 0) break;
 
-		oob(buf, 512, buf+512);
+		memcpy(img, buf, 512);
+		img += 512;
 
-		memcpy(img, buf, 512+16);
-		img += 512+16;
+		if (flash_type == FLASH_TYPE_NAND) {
+			oob(buf, 512, oob_buf);
+			memcpy(img, oob_buf, 16);
+			img += 16;
+		}
+
 		if (ret != 512) break;
 		nb--;
 		if (nb == -1) {
@@ -175,16 +211,24 @@ static void partition_write(char *img, const char *part_name, const char *filena
 			exit(EXIT_FAILURE);
 		}
 	}
-	printf("Write %d blocks at %d\n", _nb-nb, part_tab[i].off);
+	printf("Write %d blocks at %ld\n", _nb-nb, part_tab[i].off);
 
 	fclose(fp);
 }
 
+static void usage(const char *name)
+{
+	fprintf(stderr, "Usage: %s [options]\n", name);
+	printf("\t-s <size>\n");
+	printf("\t-f <file>             image file\n");
+	printf("\t-p <partition table file>\n");
+	printf("\t-w <partition>,<file> write a partition\n");
+	printf("\t-r <partition>,<file> read a partition\n");
+	printf("\t-t <type>             flash type: nand or nor\n");
+}
 
 int main(int argc, char *argv[])
 {
-	unsigned char buf[512];
-	unsigned char check1[16], check2[16];
 	int i;
 	int opt;
 	int fd_img;
@@ -197,9 +241,9 @@ int main(int argc, char *argv[])
 	nb_act = 0;
 	img_size = 0;
 
-	while ((opt = getopt(argc, argv, "m:i:p:w:r:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:f:p:w:r:t:")) != -1) {
 		switch (opt) {
-			case 'm':
+			case 's':
 				img_size = atoi(optarg);
 				switch (optarg[strlen(optarg)-1]) {
 					case 'K':
@@ -215,9 +259,9 @@ int main(int argc, char *argv[])
 						img_size *= 1024*1024*1024;
 						break;
 				}
-				printf("size img = %d\n", img_size);
+				printf("size img = %ld\n", img_size);
 				break;
-			case 'i':
+			case 'f':
 				filename = strdup(optarg);
 				break;
 			case 'w':
@@ -232,9 +276,14 @@ int main(int argc, char *argv[])
 			case 'p':
 				partition_file(optarg);
 				break;
+			case 't':
+				if (!strcmp(optarg, "nand"))
+					flash_type = FLASH_TYPE_NAND;
+				if (!strcmp(optarg, "nor"))
+					flash_type = FLASH_TYPE_NOR;
+				break;
 			default: /* '?' */
-				fprintf(stderr, "Usage: %s [-t nsecs] [-n] name\n",
-						argv[0]);
+				usage(argv[0]);
 				exit(EXIT_FAILURE);
 		}
 	}
@@ -246,7 +295,6 @@ int main(int argc, char *argv[])
 
 	fd_img = open(filename, O_CREAT | O_RDONLY, 0666);
 	len = lseek(fd_img, 0, SEEK_END);
-	printf("len=%d\n",len);
 
 	if (img_size == 0)
 		img_size = len;
@@ -256,11 +304,11 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 	img = malloc(img_size);
-printf("malloc(%d) %p\n", img_size, img);
 	if (img == NULL) {
 		printf("Error malloc\n");
 	}
 
+	printf("Flash type: %s\n", flash_type == FLASH_TYPE_NAND ? "NAND": "NOR");
 	memset(img, 0xFF, img_size);
 	
 	if (len) {
@@ -279,7 +327,6 @@ printf("malloc(%d) %p\n", img_size, img);
 		else
 			partition_read(img, act_tab[i].part, act_tab[i].file);
 	}
-//	memset(img+0x200, 0xff, 16);
 
 	write(fd_img, img, img_size);
 	close(fd_img);

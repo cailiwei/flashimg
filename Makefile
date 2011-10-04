@@ -1,6 +1,9 @@
-CFLAGS := -DSTANDALONE -ggdb3
+CFLAGS := -DSTANDALONE -Wall
 
-all: flash
+all: flashimg
 
-flash: main.o nand_ecc.o
+flashimg: main.o nand_ecc.o
 	$(CC) -o $@ $^
+
+clean:
+	rm *.o flashimg

@@ -1,0 +1,34 @@
+About
+-----
+
+Flashimg is a tool used to create and handle flash image file.
+you can read/write a binary file from/to a partition of your flash image file.
+
+Compilation
+-----------
+
+$ make
+
+Usage
+-----
+
+Flashimg need a partition file to define all the partitions of your flash image file.
+
+Partition file format :
+
+<partition name> <partion length> <offset>
+
+Example:
+boot    0x00040000      0x00000000
+env     0x00020000      0x00040000
+kernel  0x00500000      0x00060000
+root    0x03aa0000      0x00560000
+
+Syntax:
+
+flashimg -s <size> -t <flash type> -f <image file> -p <partition file> -w <partition name to write>,<file> -r <partition name to read>,<file>
+
+The size can be write whith sufix K,M and G for KByte, MByte and GByte
+
+Example for a 2MB file called nor.img where write the kernel and bootloader partition:
+$ ./flashimg -s 2M -t nor -f nor.img -p boot.part -w boot,../bootloader/boot.bin -w kernel,zImage
