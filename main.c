@@ -177,9 +177,8 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	printf("off real=%lx\n", off);
 
 	printf("Erase partion\n");
-	img += off;
 	if (flash_type == FLASH_TYPE_NAND)
-		memset(img, 0xff, part_tab[i].len);
+		memset(img + off, 0xff, part_tab[i].len);
 
 	printf("Write partion:\n");
 	fp = fopen(filename, "rb");
@@ -195,13 +194,13 @@ static void partition_write(char *img, const char *part_name, const char *filena
 		ret = fread(buf, 1, 512, fp);
 		if (ret <= 0) break;
 
-		memcpy(img, buf, 512);
-		img += 512;
+		memcpy(img + off, buf, 512);
+		off += 512;
 
 		if (flash_type == FLASH_TYPE_NAND) {
 			oob(buf, 512, oob_buf);
-			memcpy(img, oob_buf, 16);
-			img += 16;
+			memcpy(img + off, oob_buf, 16);
+			off += 16;
 		}
 
 		if (ret != 512) break;
@@ -303,6 +302,10 @@ int main(int argc, char *argv[])
 		printf("Image file is zero\n");
 		return EXIT_FAILURE;
 	}
+
+	if (flash_type == FLASH_TYPE_NAND)
+		img_size += img_size/512 * 16;
+
 	img = malloc(img_size);
 	if (img == NULL) {
 		printf("Error malloc\n");
