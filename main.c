@@ -42,26 +42,38 @@ struct action {
 	char action;
 };
 
+struct ecc_info {
+	int page_size;
+	int oob_size;
+	int ecc_nb;
+	int ecc_pos[24];
+};
 
-void __nand_calculate_ecc(const unsigned char *buf, unsigned int eccsize,
-		       unsigned char *code);
+struct ecc_info const ecc_tab[] = {
+	{
+	.page_size = 256,
+	.oob_size = 8,
+	.ecc_nb = 3,
+	.ecc_pos = { 0, 1, 2 },
+	},
 
-static void oob(const unsigned char *buf, size_t len, unsigned char *check)
-{
-	unsigned char code[32];
+	{
+	.page_size = 512,
+	.oob_size = 16,
+	.ecc_nb = 6,
+	.ecc_pos = { 0, 1, 2, 3, 6, 7 },
+	},
 
-	memset(check, 0xff, 16);
-
-	__nand_calculate_ecc(buf, 256, code);
-	check[0] = code[0];
-	check[1] = code[1];
-	check[2] = code[2];
-
-	__nand_calculate_ecc(buf+256, 256, code);
-	check[3] = code[0];
-	check[6] = code[1];
-	check[7] = code[2];
-}
+	{
+	.page_size = 2048,
+	.oob_size = 64,
+	.ecc_nb = 24,
+	.ecc_pos = {
+		40, 41, 42, 43, 44, 45, 46, 47,
+		48, 49, 50, 51, 52, 53, 54, 55,
+		56, 57, 58, 59, 60, 61, 62, 63 },
+	},
+};
 
 
 struct partion {
@@ -70,9 +82,36 @@ struct partion {
 	long len;
 };
 
+static struct ecc_info const *ecc = NULL;
+static int page_size;
 static struct partion part_tab[32];
 static int nb_part;
 static int flash_type;
+static int erase_value;
+
+void __nand_calculate_ecc(const unsigned char *buf, unsigned int eccsize,
+		       unsigned char *code);
+
+static void oob(const unsigned char *buf, size_t len, unsigned char *check)
+{
+	int i;
+	unsigned char code[32], *_code;
+
+	memset(check, 0xff, 16);
+
+	_code = code;
+	for (i=0;i<len/256;i++) {
+		__nand_calculate_ecc(buf+i*256, 256, _code);
+		check[0] = _code[0];
+		check[1] = _code[1];
+		check[2] = _code[2];
+		_code += 3;
+	}
+
+	for (i=0;i<ecc->ecc_nb;i++)
+		check[ecc->ecc_pos[i]] = code[i];
+}
+
 
 static void partition_file(const char *filename)
 {
@@ -109,11 +148,12 @@ static void partition_file(const char *filename)
 
 static void partition_read(char *img, const char *part_name, const char *filename)
 {
-	char buf[512+16];
-	int i, nb, ret,n, _nb;
+	char *buf;
+	int i, nb_page, ret,n, pages;
 	FILE *fp;
 	unsigned long off;
 
+	buf = malloc(page_size);
 	for(i=0;i<nb_part;i++) {
 		if (!strcmp(part_tab[i].name, part_name)) {
 			break;
@@ -121,11 +161,12 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 	}
 	if (i==nb_part) return;
 
-	printf("Partion %s found (0x%lx bytes @0x%lx)\n", part_name, part_tab[i].len, part_tab[i].off);
+	printf("Partion %s found (0x%lx bytes @0x%lx)\n",
+			part_name, part_tab[i].len, part_tab[i].off);
 	n = i;
 
 	if (flash_type == FLASH_TYPE_NAND)
-		off = part_tab[i].off + (part_tab[i].off / 512) * 16;
+		off = part_tab[i].off + (part_tab[i].off / ecc->page_size) * ecc->oob_size;
 	else
 		off = part_tab[i].off;
 	printf("off real=%lx\n", off);
@@ -138,29 +179,30 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 		exit(EXIT_FAILURE);
 	}
 
-	_nb = nb = (part_tab[i].len + 511)/512;
+	pages = nb_page = (part_tab[i].len + page_size - 1) / ecc->page_size;
 
-	while (nb--) {
-		memcpy(buf, img, 512);
-		ret = fwrite(buf, 1, 512, fp);
-		img += 512;
+	while (nb_page--) {
+		memcpy(buf, img, page_size);
+		ret = fwrite(buf, 1, page_size, fp);
+		img += page_size;
 		if (flash_type == FLASH_TYPE_NAND)
-			img += 16;
+			img += ecc->oob_size;
 	}
-	printf("Read %d blocks at %ld\n", _nb-nb, part_tab[i].off);
+	printf("Read %d blocks at %ld\n", pages-nb_page, part_tab[i].off);
 
 	fclose(fp);
 }
 
 static void partition_write(char *img, const char *part_name, const char *filename)
 {
-	unsigned char buf[512];
-	unsigned char oob_buf[16];
-	int i, nb, ret,n, _nb;
+	unsigned char *buf;
+	unsigned char oob_buf[64];
+	int i, nb_page, ret,n, pages;
 	FILE *fp;
 	unsigned long off;
+	size_t part_len;
 
-	printf("img=%p\n", img);
+	buf = malloc(page_size);
 	for(i=0;i<nb_part;i++) {
 		if (!strcmp(part_tab[i].name, part_name)) {
 			break;
@@ -168,18 +210,23 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	}
 	if (i==nb_part) return;
 
-	printf("Partion %s found (0x%lx bytes @0x%lx)\n", part_name, part_tab[i].len, part_tab[i].off);
+	printf("Partion %s found (0x%lx bytes @0x%lx)\n",
+			part_name, part_tab[i].len, part_tab[i].off);
 	n = i;
 
-	if (flash_type == FLASH_TYPE_NAND)
-		off = part_tab[i].off + (part_tab[i].off / 512) * 16;
-	else
+	pages = nb_page = (part_tab[i].len + page_size - 1) / page_size;
+
+	if (flash_type == FLASH_TYPE_NAND) {
+		off = part_tab[i].off + (part_tab[i].off / ecc->page_size) * ecc->oob_size;
+		part_len = nb_page * (page_size + ecc->oob_size);
+	} else {
 		off = part_tab[i].off;
+		part_len = nb_page * page_size;
+	}
 	printf("off real=%lx\n", off);
 
 	printf("Erase partion\n");
-	if (flash_type == FLASH_TYPE_NAND)
-		memset(img + off, 0xff, part_tab[i].len);
+	memset(img + off, erase_value, part_len);
 
 	printf("Write partion:\n");
 	fp = fopen(filename, "rb");
@@ -188,30 +235,29 @@ static void partition_write(char *img, const char *part_name, const char *filena
 		exit(EXIT_FAILURE);
 	}
 
-	_nb = nb = (part_tab[i].len + 511)/512;
-
 	while (1) {
-		memset(buf, 0, 512);
-		ret = fread(buf, 1, 512, fp);
+		memset(buf, erase_value, page_size);
+		ret = fread(buf, 1, page_size, fp);
 		if (ret <= 0) break;
 
-		memcpy(img + off, buf, 512);
-		off += 512;
+		memcpy(img + off, buf, page_size);
+		off += page_size;
 
 		if (flash_type == FLASH_TYPE_NAND) {
-			oob(buf, 512, oob_buf);
-			memcpy(img + off, oob_buf, 16);
-			off += 16;
+			oob(buf, ecc->page_size, oob_buf);
+			memcpy(img + off, oob_buf, ecc->oob_size);
+			off += ecc->oob_size;
 		}
 
-		if (ret != 512) break;
-		nb--;
-		if (nb == -1) {
-			printf("File %s to big for the partion %s\n", filename, part_tab[i].name);
+		if (ret != page_size) break;
+		nb_page--;
+		if (nb_page == -1) {
+			printf("File %s to big for the partion %s\n",
+						filename, part_tab[i].name);
 			exit(EXIT_FAILURE);
 		}
 	}
-	printf("Write %d blocks at %ld\n", _nb-nb, part_tab[i].off);
+	printf("Write %d blocks at %ld\n", pages-nb_page, part_tab[i].off);
 
 	fclose(fp);
 }
@@ -226,6 +272,8 @@ static void usage(const char *name)
 	printf("\t-w <partition>,<file> write a partition\n");
 	printf("\t-r <partition>,<file> read a partition\n");
 	printf("\t-t <type>             flash type: nand or nor\n");
+	printf("\t-z <page size>        page size of the flash\n");
+	printf("\t                      valid values are 256, 512 and 2048\n");
 }
 
 int main(int argc, char *argv[])
@@ -238,11 +286,12 @@ int main(int argc, char *argv[])
 	char *img;
 	struct action act_tab[32];
 	int nb_act;
+	int err = 0;
 
 	nb_act = 0;
 	img_size = 0;
 
-	while ((opt = getopt(argc, argv, "vs:f:p:w:r:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "vs:f:p:w:r:t:z:")) != -1) {
 		switch (opt) {
 			case 'v':
 				printf(PACKAGE_NAME " version " VERSION "\n");
@@ -263,7 +312,7 @@ int main(int argc, char *argv[])
 						img_size *= 1024*1024*1024;
 						break;
 				}
-				printf("size img = %ld\n", img_size);
+				printf("size img = %zd\n", img_size);
 				break;
 			case 'f':
 				filename = strdup(optarg);
@@ -283,14 +332,37 @@ int main(int argc, char *argv[])
 			case 't':
 				if (!strcmp(optarg, "nand"))
 					flash_type = FLASH_TYPE_NAND;
-				if (!strcmp(optarg, "nor"))
+				else if (!strcmp(optarg, "nor")) {
 					flash_type = FLASH_TYPE_NOR;
+					page_size = 4096;
+				} else
+					fprintf(stderr, "Wrong page size\n");
+				break;
+			case 'z':
+				page_size = atoi(optarg);
+				for(i=0;i<3;i++) {
+					if (ecc_tab[i].page_size == page_size) {
+						ecc = &ecc_tab[i];
+						break;
+					}
+				}
+				if (ecc == NULL) {
+					err++;
+					fprintf(stderr, "Wrong page size\n");
+				}
 				break;
 			default: /* '?' */
 				usage(argv[0]);
-				exit(EXIT_FAILURE);
+				err++;
 		}
 	}
+	if (flash_type == FLASH_TYPE_NAND && ecc == NULL) {
+		fprintf(stderr, "Missing page size for NAND flash\n");
+		err++;
+	}
+
+	if (err)
+		return EXIT_FAILURE;
 
 	if (!filename) {
 		printf("Mising image file\n");
@@ -309,15 +381,19 @@ int main(int argc, char *argv[])
 	}
 
 	if (flash_type == FLASH_TYPE_NAND)
-		img_size += img_size/512 * 16;
+		img_size += img_size / page_size * ecc->oob_size;
 
 	img = malloc(img_size);
 	if (img == NULL) {
 		printf("Error malloc\n");
 	}
 
-	printf("Flash type: %s\n", flash_type == FLASH_TYPE_NAND ? "NAND": "NOR");
-	memset(img, 0xFF, img_size);
+	printf("Flash type: %s\n", flash_type==FLASH_TYPE_NAND ? "NAND": "NOR");
+	if (flash_type == FLASH_TYPE_NAND)
+		erase_value = 0xFF;
+	else
+		erase_value = 0;
+	memset(img, erase_value, img_size);
 	
 	if (len) {
 		printf("Read content file\n");
