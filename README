@@ -7,7 +7,10 @@ you can read/write a binary file from/to a partition of your flash image file.
 Compilation
 -----------
 
+$ ./autogen.sh
+$ ./configure
 $ make
+$ sudo make install
 
 Usage
 -----

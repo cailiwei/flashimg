@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "config.h"
 
 #define FLASH_TYPE_NAND	0
 #define FLASH_TYPE_NOR	1
@@ -218,6 +219,7 @@ static void partition_write(char *img, const char *part_name, const char *filena
 static void usage(const char *name)
 {
 	fprintf(stderr, "Usage: %s [options]\n", name);
+	printf("\t-v                    print version\n");
 	printf("\t-s <size>\n");
 	printf("\t-f <file>             image file\n");
 	printf("\t-p <partition table file>\n");
@@ -240,8 +242,11 @@ int main(int argc, char *argv[])
 	nb_act = 0;
 	img_size = 0;
 
-	while ((opt = getopt(argc, argv, "s:f:p:w:r:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "vs:f:p:w:r:t:")) != -1) {
 		switch (opt) {
+			case 'v':
+				printf(PACKAGE_NAME " version " VERSION "\n");
+				break;
 			case 's':
 				img_size = atoi(optarg);
 				switch (optarg[strlen(optarg)-1]) {
