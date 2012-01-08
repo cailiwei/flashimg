@@ -76,7 +76,7 @@ struct ecc_info const ecc_tab[] = {
 };
 
 
-struct partion {
+struct partition {
 	char *name;
 	long off;
 	long len;
@@ -84,7 +84,7 @@ struct partion {
 
 static struct ecc_info const *ecc = NULL;
 static int page_size;
-static struct partion part_tab[32];
+static struct partition part_tab[32];
 static int nb_part;
 static int flash_type;
 
@@ -112,28 +112,34 @@ static void oob(const unsigned char *buf, size_t len, unsigned char *check)
 }
 
 
-static void partition_file(const char *filename)
+static int partition_file(const char *filename)
 {
 	int idx = 0;
 	char name[64];
 	long off, len;
 	FILE *fp;
+	int retval = 0;
 
 	/* 
 	 * File format:
-	 * <partion name> <offset> <length>
+	 * <partition name> <offset> <length>
 	 */
-	printf("Partion list:\n");
+	printf("Partition list:\n");
 	fp = fopen(filename, "r");
 	if (fp == NULL) {
-		printf("Can't open partion file %s\n", filename);
-		exit(EXIT_FAILURE);
+		printf("Can't open partition file %s\n", filename);
+		return -1;
 	}
 
 	printf("name\toffset\t\tsize\n");
 	do {
 		int ret = fscanf(fp, "%s %li %li", name, &len, &off);
-		if (ret != 3) break;
+		if (ret == -1) break;
+		if (ret != 3) {
+			retval = -1;
+			printf("Error in partition file\n");
+			break;
+		}
 		part_tab[idx].name = strdup(name);
 		part_tab[idx].off = off;
 		part_tab[idx].len = len;
@@ -143,6 +149,8 @@ static void partition_file(const char *filename)
 	nb_part = idx;
 
 	fclose(fp);
+
+	return retval;
 }
 
 static void partition_read(char *img, const char *part_name, const char *filename)
@@ -171,7 +179,7 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 	printf("off real=%lx\n", off);
 	img += off;
 
-	printf("Read partion:\n");
+	printf("Read partition:\n");
 	fp = fopen(filename, "wb");
 	if (fp == NULL) {
 		printf("Can't open file %s\n", filename);
@@ -224,10 +232,10 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	}
 	printf("off real=%lx\n", off);
 
-	printf("Erase partion\n");
+	printf("Erase partition\n");
 	memset(img + off, 0xFF, part_len);
 
-	printf("Write partion:\n");
+	printf("Write partition:\n");
 	fp = fopen(filename, "rb");
 	if (fp == NULL) {
 		printf("Can't open file %s\n", filename);
@@ -251,7 +259,7 @@ static void partition_write(char *img, const char *part_name, const char *filena
 		if (ret != page_size) break;
 		nb_page--;
 		if (nb_page == -1) {
-			printf("File %s to big for the partion %s\n",
+			printf("File %s to big for the partition %s\n",
 						filename, part_tab[i].name);
 			exit(EXIT_FAILURE);
 		}
@@ -291,6 +299,8 @@ int main(int argc, char *argv[])
 	img_size = 0;
 
 	while ((opt = getopt(argc, argv, "vs:f:p:w:r:t:z:")) != -1) {
+		int retval;
+
 		switch (opt) {
 			case 'v':
 				printf(PACKAGE_NAME " version " VERSION "\n");
@@ -326,7 +336,8 @@ int main(int argc, char *argv[])
 				nb_act++;
 				break;
 			case 'p':
-				partition_file(optarg);
+				retval = partition_file(optarg);
+				if (retval != 0) err++;
 				break;
 			case 't':
 				if (!strcmp(optarg, "nand"))
@@ -360,13 +371,13 @@ int main(int argc, char *argv[])
 		err++;
 	}
 
-	if (err)
-		return EXIT_FAILURE;
-
 	if (!filename) {
 		printf("Mising image file\n");
-		return EXIT_FAILURE;
+		err++;
 	}
+
+	if (err)
+		return EXIT_FAILURE;
 
 	fd_img = open(filename, O_CREAT | O_RDONLY, 0666);
 	len = lseek(fd_img, 0, SEEK_END);
@@ -385,6 +396,7 @@ int main(int argc, char *argv[])
 	img = malloc(img_size);
 	if (img == NULL) {
 		printf("Error malloc\n");
+		return EXIT_FAILURE;
 	}
 
 	printf("Flash type: %s\n", flash_type==FLASH_TYPE_NAND ? "NAND": "NOR");

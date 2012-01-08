@@ -29,7 +29,7 @@ root    0x03aa0000      0x00560000
 
 Syntax:
 
-flashimg -s <size> -t <flash type> -f <image file> -p <partition file> -w <partition name to write>,<file> -r <partition name to read>,<file>
+flashimg -s <size> -t <flash type> -z <page size> -f <image file> -p <partition file> -w <partition name to write>,<file> -r <partition name to read>,<file>
 
 The size can be write whith sufix K,M and G for KByte, MByte and GByte
 
