@@ -87,7 +87,6 @@ static int page_size;
 static struct partion part_tab[32];
 static int nb_part;
 static int flash_type;
-static int erase_value;
 
 void __nand_calculate_ecc(const unsigned char *buf, unsigned int eccsize,
 		       unsigned char *code);
@@ -226,7 +225,7 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	printf("off real=%lx\n", off);
 
 	printf("Erase partion\n");
-	memset(img + off, erase_value, part_len);
+	memset(img + off, 0xFF, part_len);
 
 	printf("Write partion:\n");
 	fp = fopen(filename, "rb");
@@ -236,7 +235,7 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	}
 
 	while (1) {
-		memset(buf, erase_value, page_size);
+		memset(buf, 0xFF, page_size);
 		ret = fread(buf, 1, page_size, fp);
 		if (ret <= 0) break;
 
@@ -389,11 +388,7 @@ int main(int argc, char *argv[])
 	}
 
 	printf("Flash type: %s\n", flash_type==FLASH_TYPE_NAND ? "NAND": "NOR");
-	if (flash_type == FLASH_TYPE_NAND)
-		erase_value = 0xFF;
-	else
-		erase_value = 0;
-	memset(img, erase_value, img_size);
+	memset(img, 0xFF, img_size);
 	
 	if (len) {
 		printf("Read content file\n");
