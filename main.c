@@ -153,7 +153,7 @@ static int partition_file(const char *filename)
 	return retval;
 }
 
-static void partition_read(char *img, const char *part_name, const char *filename)
+static void partition_read(struct image *img, const char *part_name, const char *filename)
 {
 	char *buf;
 	int i, nb_page, ret,n, pages;
@@ -177,7 +177,7 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 	else
 		off = part_tab[i].off;
 	printf("off real=%lx\n", off);
-	img += off;
+	img->mem += off;
 
 	printf("Read partition:\n");
 	fp = fopen(filename, "wb");
@@ -189,18 +189,18 @@ static void partition_read(char *img, const char *part_name, const char *filenam
 	pages = nb_page = (part_tab[i].len + page_size - 1) / ecc->page_size;
 
 	while (nb_page--) {
-		memcpy(buf, img, page_size);
+		memcpy(buf, img->mem, page_size);
 		ret = fwrite(buf, 1, page_size, fp);
-		img += page_size;
+		img->mem += page_size;
 		if (flash_type == FLASH_TYPE_NAND)
-			img += ecc->oob_size;
+			img->mem += ecc->oob_size;
 	}
 	printf("Read %d blocks at %ld\n", pages-nb_page, part_tab[i].off);
 
 	fclose(fp);
 }
 
-static void partition_write(char *img, const char *part_name, const char *filename)
+static void partition_write(struct image *img, const char *part_name, const char *filename)
 {
 	unsigned char *buf;
 	unsigned char oob_buf[64];
@@ -217,7 +217,7 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	}
 	if (i==nb_part) return;
 
-	printf("Partion %s found (0x%lx bytes @0x%lx)\n",
+	printf("Partition %s found (0x%lx bytes @0x%lx)\n",
 			part_name, part_tab[i].len, part_tab[i].off);
 	n = i;
 
@@ -232,8 +232,25 @@ static void partition_write(char *img, const char *part_name, const char *filena
 	}
 	printf("off real=%lx\n", off);
 
+	if (img->size < off) {
+		printf("Error: image file too small\n");
+		exit(EXIT_FAILURE);
+	}
+	if (img->size-off < part_len) {
+		printf("Error: partition too big\n");
+		exit(EXIT_FAILURE);
+	}
+
+	struct stat _stat;
+	ret = stat(filename, &_stat);
+	printf("  st_size=%d part_len=%d\n", _stat.st_size, part_len);
+	if (_stat.st_size > part_len) {
+		printf("Error: file too big\n");
+		exit(EXIT_FAILURE);
+	}
+
 	printf("Erase partition\n");
-	memset(img + off, 0xFF, part_len);
+	memset(img->mem + off, 0xFF, part_len);
 
 	printf("Write partition:\n");
 	fp = fopen(filename, "rb");
@@ -247,12 +264,12 @@ static void partition_write(char *img, const char *part_name, const char *filena
 		ret = fread(buf, 1, page_size, fp);
 		if (ret <= 0) break;
 
-		memcpy(img + off, buf, page_size);
+		memcpy(img->mem + off, buf, page_size);
 		off += page_size;
 
 		if (flash_type == FLASH_TYPE_NAND) {
 			oob(buf, ecc->page_size, oob_buf);
-			memcpy(img + off, oob_buf, ecc->oob_size);
+			memcpy(img->mem + off, oob_buf, ecc->oob_size);
 			off += ecc->oob_size;
 		}
 
@@ -288,15 +305,16 @@ int main(int argc, char *argv[])
 	int i;
 	int opt;
 	int fd_img;
-	size_t img_size, len;
+	size_t len;
 	char *filename = NULL, *p;
-	char *img;
+//	char *img;
+	struct image img;
 	struct action act_tab[32];
 	int nb_act;
 	int err = 0;
 
 	nb_act = 0;
-	img_size = 0;
+	img.size = 0;
 
 	while ((opt = getopt(argc, argv, "vs:f:p:w:r:t:z:")) != -1) {
 		int retval;
@@ -306,22 +324,22 @@ int main(int argc, char *argv[])
 				printf(PACKAGE_NAME " version " VERSION "\n");
 				break;
 			case 's':
-				img_size = atoi(optarg);
+				img.size = atoi(optarg);
 				switch (optarg[strlen(optarg)-1]) {
 					case 'K':
 					case 'k':
-						img_size *= 1024;
+						img.size *= 1024;
 						break;
 					case 'M':
 					case 'm':
-						img_size *= 1024*1024;
+						img.size *= 1024*1024;
 						break;
 					case 'G':
 					case 'g':
-						img_size *= 1024*1024*1024;
+						img.size *= 1024*1024*1024;
 						break;
 				}
-				printf("size img = %zd\n", img_size);
+				printf("size img = %zd\n", img.size);
 				break;
 			case 'f':
 				filename = strdup(optarg);
@@ -382,30 +400,30 @@ int main(int argc, char *argv[])
 	fd_img = open(filename, O_CREAT | O_RDONLY, 0666);
 	len = lseek(fd_img, 0, SEEK_END);
 
-	if (img_size == 0)
-		img_size = len;
+	if (img.size == 0)
+		img.size = len;
 
-	if (img_size == 0) {
+	if (img.size == 0) {
 		printf("Image file is zero\n");
 		return EXIT_FAILURE;
 	}
 
 	if (flash_type == FLASH_TYPE_NAND)
-		img_size += img_size / page_size * ecc->oob_size;
+		img.size += img.size / page_size * ecc->oob_size;
 
-	img = malloc(img_size);
-	if (img == NULL) {
+	img.mem = malloc(img.size);
+	if (img.mem == NULL) {
 		printf("Error malloc\n");
 		return EXIT_FAILURE;
 	}
 
 	printf("Flash type: %s\n", flash_type==FLASH_TYPE_NAND ? "NAND": "NOR");
-	memset(img, 0xFF, img_size);
+	memset(img.mem, 0xFF, img.size);
 	
 	if (len) {
 		printf("Read content file\n");
 		lseek(fd_img, 0, SEEK_SET);
-		read(fd_img, img, img_size);
+		read(fd_img, img.mem, img.size);
 	}
 	close(fd_img);
 
@@ -414,12 +432,12 @@ int main(int argc, char *argv[])
 	for(i=0;i<nb_act;i++) {
 		putchar('\n');
 		if (act_tab[i].action == 'w')
-			partition_write(img, act_tab[i].part, act_tab[i].file);
+			partition_write(&img, act_tab[i].part, act_tab[i].file);
 		else
-			partition_read(img, act_tab[i].part, act_tab[i].file);
+			partition_read(&img, act_tab[i].part, act_tab[i].file);
 	}
 
-	write(fd_img, img, img_size);
+	write(fd_img, img.mem, img.size);
 	close(fd_img);
 
 	free(filename);
