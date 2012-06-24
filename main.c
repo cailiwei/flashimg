@@ -1,6 +1,6 @@
 /*
  * flashimg
- * Copyright (C) 2011  Yargil <yargil@free.fr>
+ * Copyright (C) 2011-2012  Yargil <yargil@free.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -111,7 +111,9 @@ static void oob(const unsigned char *buf, size_t len, unsigned char *check)
 		check[ecc->ecc_pos[i]] = code[i];
 }
 
-
+/*
+ * Parse the partition file
+ */
 static int partition_file(const char *filename)
 {
 	int idx = 0;
@@ -153,24 +155,26 @@ static int partition_file(const char *filename)
 	return retval;
 }
 
+/*
+ * Read data from image file
+ */
 static void partition_read(struct image *img, const char *part_name, const char *filename)
 {
 	char *buf;
-	int i, nb_page, ret,n, pages;
+	int i, nb_page, pages;
 	FILE *fp;
 	unsigned long off;
 
 	buf = malloc(page_size);
-	for(i=0;i<nb_part;i++) {
+	for (i=0;i<nb_part;i++) {
 		if (!strcmp(part_tab[i].name, part_name)) {
 			break;
 		}
 	}
-	if (i==nb_part) return;
+	if (i == nb_part) return;
 
 	printf("Partion %s found (0x%lx bytes @0x%lx)\n",
 			part_name, part_tab[i].len, part_tab[i].off);
-	n = i;
 
 	if (flash_type == FLASH_TYPE_NAND)
 		off = part_tab[i].off + (part_tab[i].off / ecc->page_size) * ecc->oob_size;
@@ -190,7 +194,7 @@ static void partition_read(struct image *img, const char *part_name, const char 
 
 	while (nb_page--) {
 		memcpy(buf, img->mem, page_size);
-		ret = fwrite(buf, 1, page_size, fp);
+		fwrite(buf, 1, page_size, fp);
 		img->mem += page_size;
 		if (flash_type == FLASH_TYPE_NAND)
 			img->mem += ecc->oob_size;
@@ -200,14 +204,18 @@ static void partition_read(struct image *img, const char *part_name, const char 
 	fclose(fp);
 }
 
+/*
+ * Write data to image file
+ */
 static void partition_write(struct image *img, const char *part_name, const char *filename)
 {
 	unsigned char *buf;
 	unsigned char oob_buf[64];
-	int i, nb_page, ret,n, pages;
+	int i, nb_page, ret, pages;
 	FILE *fp;
 	unsigned long off;
 	size_t part_len;
+	struct stat _stat;
 
 	buf = malloc(page_size);
 	for(i=0;i<nb_part;i++) {
@@ -219,7 +227,6 @@ static void partition_write(struct image *img, const char *part_name, const char
 
 	printf("Partition %s found (0x%lx bytes @0x%lx)\n",
 			part_name, part_tab[i].len, part_tab[i].off);
-	n = i;
 
 	pages = nb_page = (part_tab[i].len + page_size - 1) / page_size;
 
@@ -241,9 +248,8 @@ static void partition_write(struct image *img, const char *part_name, const char
 		exit(EXIT_FAILURE);
 	}
 
-	struct stat _stat;
 	ret = stat(filename, &_stat);
-	printf("  st_size=%d part_len=%d\n", _stat.st_size, part_len);
+	printf("  st_size=%zd part_len=%zd\n", _stat.st_size, part_len);
 	if (_stat.st_size > part_len) {
 		fprintf(stderr, "Error: file too big\n");
 		exit(EXIT_FAILURE);
@@ -290,13 +296,13 @@ static void usage(const char *name)
 {
 	fprintf(stderr, "Usage: %s [options]\n", name);
 	printf("\t-v                    print version\n");
-	printf("\t-s <size>\n");
+	printf("\t-s <size>             size of the image file\n");
 	printf("\t-f <file>             image file\n");
 	printf("\t-p <partition table file>\n");
 	printf("\t-w <partition>,<file> write a partition\n");
 	printf("\t-r <partition>,<file> read a partition\n");
 	printf("\t-t <type>             flash type: nand or nor\n");
-	printf("\t-z <page size>        page size of the flash\n");
+	printf("\t-z <page size>        page size of the NAND flash\n");
 	printf("\t                      valid values are 256, 512 and 2048\n");
 }
 
@@ -307,7 +313,6 @@ int main(int argc, char *argv[])
 	int fd_img;
 	size_t len;
 	char *filename = NULL, *p;
-//	char *img;
 	struct image img;
 	struct action act_tab[32];
 	int nb_act;
