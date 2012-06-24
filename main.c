@@ -127,7 +127,7 @@ static int partition_file(const char *filename)
 	printf("Partition list:\n");
 	fp = fopen(filename, "r");
 	if (fp == NULL) {
-		printf("Can't open partition file %s\n", filename);
+		fprintf(stderr, "Can't open partition file %s\n", filename);
 		return -1;
 	}
 
@@ -137,7 +137,7 @@ static int partition_file(const char *filename)
 		if (ret == -1) break;
 		if (ret != 3) {
 			retval = -1;
-			printf("Error in partition file\n");
+			fprintf(stderr, "Error in partition file\n");
 			break;
 		}
 		part_tab[idx].name = strdup(name);
@@ -182,7 +182,7 @@ static void partition_read(struct image *img, const char *part_name, const char 
 	printf("Read partition:\n");
 	fp = fopen(filename, "wb");
 	if (fp == NULL) {
-		printf("Can't open file %s\n", filename);
+		fprintf(stderr, "Can't open file %s\n", filename);
 		exit(EXIT_FAILURE);
 	}
 
@@ -233,11 +233,11 @@ static void partition_write(struct image *img, const char *part_name, const char
 	printf("off real=%lx\n", off);
 
 	if (img->size < off) {
-		printf("Error: image file too small\n");
+		fprintf(stderr, "Error: image file too small\n");
 		exit(EXIT_FAILURE);
 	}
 	if (img->size-off < part_len) {
-		printf("Error: partition too big\n");
+		fprintf(stderr, "Error: partition too big\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -245,7 +245,7 @@ static void partition_write(struct image *img, const char *part_name, const char
 	ret = stat(filename, &_stat);
 	printf("  st_size=%d part_len=%d\n", _stat.st_size, part_len);
 	if (_stat.st_size > part_len) {
-		printf("Error: file too big\n");
+		fprintf(stderr, "Error: file too big\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -255,7 +255,7 @@ static void partition_write(struct image *img, const char *part_name, const char
 	printf("Write partition:\n");
 	fp = fopen(filename, "rb");
 	if (fp == NULL) {
-		printf("Can't open file %s\n", filename);
+		fprintf(stderr, "Error: can't open file %s\n", filename);
 		exit(EXIT_FAILURE);
 	}
 
@@ -276,7 +276,7 @@ static void partition_write(struct image *img, const char *part_name, const char
 		if (ret != page_size) break;
 		nb_page--;
 		if (nb_page == -1) {
-			printf("File %s to big for the partition %s\n",
+			fprintf(stderr, "File %s to big for the partition %s\n",
 						filename, part_tab[i].name);
 			exit(EXIT_FAILURE);
 		}
@@ -390,7 +390,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (!filename) {
-		printf("Mising image file\n");
+		fprintf(stderr, "Mising image file\n");
 		err++;
 	}
 
@@ -404,7 +404,7 @@ int main(int argc, char *argv[])
 		img.size = len;
 
 	if (img.size == 0) {
-		printf("Image file is zero\n");
+		fprintf(stderr, "Error: image file is zero\n");
 		return EXIT_FAILURE;
 	}
 
@@ -413,7 +413,7 @@ int main(int argc, char *argv[])
 
 	img.mem = malloc(img.size);
 	if (img.mem == NULL) {
-		printf("Error malloc\n");
+		fprintf(stderr, "Error: malloc\n");
 		return EXIT_FAILURE;
 	}
 
