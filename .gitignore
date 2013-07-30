@@ -1,0 +1,17 @@
+*.o
+flashimg
+Makefile
+Makefile.in
+.deps
+config.h
+config.h.in
+config.log
+config.status
+stamp-h1
+autom4te.cache
+INSTALL
+aclocal.m4
+configure
+depcomp
+install-sh
+missing

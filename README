@@ -1,0 +1,58 @@
+About
+-----
+
+Flashimg is a tool used to create and handle flash image file.
+you can read/write a binary file from/to a partition of your flash image file.
+Very useful with Qemu. 
+
+Compilation and installation
+----------------------------
+
+Download the source code :
+
+git clone git://gitorious.org/flashimg
+
+And now, the classic:
+
+$ ./autogen.sh
+$ ./configure
+$ make
+$ sudo make install
+
+Usage
+-----
+
+Flashimg need a partition file to define all the partitions of your flash image file. Syntax:
+
+flashimg -s [size] -t [flash type] -f [image file] -p [partition file] -w [partition name to write],[file] -r [partition name to read],[file]
+
+-s size
+    Size of the flash memory image file. The value can be write whith suffix K, M and G for KByte, MByte and GByte.
+-t type
+    Type of the flash nor or nand.
+-f file
+    Output file name.
+-p file
+    Partition file name
+-w partition,file
+    Write a file to a partition in flash image file.
+-r partition,file
+    Read partition from flash image file and write to file.
+-z size
+    Sector size of the flash (NAND flash only). 256, 512 or 2048.
+
+Example for a 2MB file called nor.img where write the kernel and bootloader partition:
+
+$ flashimg -s 2M -t nor -f nor.img -p boot.part -w boot,/.../bootloader/boot.bin -w kernel,/.../linux/arch/arm/boot/zImage
+
+The partition file
+------------------
+
+The partition file format is one line per partition. Each line is the partition name, the partition length and the partition offset in flash.
+
+Partition file example:
+
+boot    0x00040000      0x00000000
+env     0x00020000      0x00040000
+kernel  0x00500000      0x00060000
+root    0x03aa0000      0x00560000
